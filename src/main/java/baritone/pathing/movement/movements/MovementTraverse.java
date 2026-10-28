@@ -30,6 +30,8 @@ import baritone.pathing.movement.Movement;
 import baritone.pathing.movement.MovementHelper;
 import baritone.pathing.movement.MovementState;
 import baritone.utils.BlockStateInterface;
+import baritone.vibrato.VibratoSettings;
+import baritone.vibrato.OptionalHopPolicy;
 import com.google.common.collect.ImmutableSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.AirBlock;
@@ -240,7 +242,10 @@ public class MovementTraverse extends Movement {
 
         boolean isTheBridgeBlockThere = MovementHelper.canWalkOn(ctx, positionToPlace) || ladder || MovementHelper.canUseFrostWalker(ctx, positionToPlace);
         BlockPos feet = ctx.playerFeet();
-        if (feet.getY() != dest.getY() && !ladder) {
+        boolean verifiedHop = !ladder && isTheBridgeBlockThere && wasTheBridgeBlockAlwaysThere
+                && VibratoSettings.getInstance().allowOptionalHopTraverse(
+                        ctx.player(), ctx.player().onGround(), feet.getY(), dest.getY());
+        if (feet.getY() != dest.getY() && !ladder && !verifiedHop) {
             logDebug("Wrong Y coordinate");
             if (feet.getY() < dest.getY()) {
                 System.out.println("In movement traverse");
@@ -250,10 +255,12 @@ public class MovementTraverse extends Movement {
         }
 
         if (isTheBridgeBlockThere) {
-            if (feet.equals(dest)) {
+            BlockPos completionFeet = new BlockPos(feet.getX(),
+                    OptionalHopPolicy.completionFeetY(feet.getY(), dest.getY(), verifiedHop), feet.getZ());
+            if (completionFeet.equals(dest)) {
                 return state.setStatus(MovementStatus.SUCCESS);
             }
-            if (Baritone.settings().overshootTraverse.value && (feet.equals(dest.offset(getDirection())) || feet.equals(dest.offset(getDirection()).offset(getDirection())))) {
+            if (Baritone.settings().overshootTraverse.value && (completionFeet.equals(dest.offset(getDirection())) || completionFeet.equals(dest.offset(getDirection()).offset(getDirection())))) {
                 return state.setStatus(MovementStatus.SUCCESS);
             }
             Block low = BlockStateInterface.get(ctx, src).getBlock();

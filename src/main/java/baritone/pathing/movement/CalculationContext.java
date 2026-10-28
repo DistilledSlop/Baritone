@@ -19,12 +19,12 @@ package baritone.pathing.movement;
 
 import baritone.Baritone;
 import baritone.api.IBaritone;
-import baritone.api.pathing.movement.ActionCosts;
 import baritone.cache.WorldData;
 import baritone.pathing.precompute.PrecomputedData;
 import baritone.utils.BlockStateInterface;
 import baritone.utils.ToolSet;
 import baritone.utils.pathing.BetterWorldBorder;
+import baritone.vibrato.VibratoSettings;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -34,7 +34,6 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.enchantment.*;
-import net.minecraft.world.item.enchantment.effects.EnchantmentAttributeEffect;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
@@ -132,24 +131,9 @@ public class CalculationContext {
         this.minFallHeight = 3; // Minimum fall height used by MovementFall
         this.maxFallHeightNoWater = Baritone.settings().maxFallHeightNoWater.value;
         this.maxFallHeightBucket = Baritone.settings().maxFallHeightBucket.value;
-        float waterSpeedMultiplier = 1.0f;
-        OUTER: for (EquipmentSlot slot : EquipmentSlot.values()) {
-            ItemEnchantments itemEnchantments = baritone.getPlayerContext()
-                .player()
-                .getItemBySlot(slot)
-                .getEnchantments();
-            for (Holder<Enchantment> enchant : itemEnchantments.keySet()) {
-                List<EnchantmentAttributeEffect> effects = enchant.value()
-                    .getEffects(EnchantmentEffectComponents.ATTRIBUTES);
-                for (EnchantmentAttributeEffect effect : effects) {
-                    if (effect.attribute().is(Attributes.WATER_MOVEMENT_EFFICIENCY.unwrapKey().get())) {
-                        waterSpeedMultiplier = effect.amount().calculate(itemEnchantments.getLevel(enchant));
-                        break OUTER;
-                    }
-                }
-            }
-        }
-        this.waterWalkSpeed = ActionCosts.WALK_ONE_IN_WATER_COST * (1 - waterSpeedMultiplier) + ActionCosts.WALK_ONE_BLOCK_COST * waterSpeedMultiplier;
+        // Vanilla's water movement efficiency defaults to zero; equipped Depth
+        // Strider and other attribute modifiers are already reflected here.
+        this.waterWalkSpeed = WaterTravelCost.forEfficiency(player.getAttributeValue(Attributes.WATER_MOVEMENT_EFFICIENCY));
         this.breakBlockAdditionalCost = Baritone.settings().blockBreakAdditionalPenalty.value;
         this.backtrackCostFavoringCoefficient = Baritone.settings().backtrackCostFavoringCoefficient.value;
         this.jumpPenalty = Baritone.settings().jumpPenalty.value;
@@ -188,6 +172,9 @@ public class CalculationContext {
         if (isPossiblyProtected(x, y, z)) {
             return COST_INF;
         }
+        if (VibratoSettings.getInstance().shouldAvoidPlacingAt(x, y, z)) {
+            return COST_INF;
+        }
         if (!worldBorder.canPlaceAt(x, z)) {
             return COST_INF;
         }
@@ -205,6 +192,9 @@ public class CalculationContext {
             return COST_INF;
         }
         if (isPossiblyProtected(x, y, z)) {
+            return COST_INF;
+        }
+        if (VibratoSettings.getInstance().shouldAvoidBreaking(x, y, z)) {
             return COST_INF;
         }
         return 1;

@@ -21,6 +21,7 @@ import baritone.Baritone;
 import baritone.api.event.events.TickEvent;
 import baritone.api.utils.Helper;
 import baritone.utils.ToolSet;
+import baritone.vibrato.VibratoSettings;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.Direction;
 import net.minecraft.core.NonNullList;
@@ -189,7 +190,9 @@ public final class InventoryBehavior extends Behavior implements Helper {
         return throwaway(select, desired, Baritone.settings().allowInventory.value);
     }
 
-    public boolean throwaway(boolean select, Predicate<? super ItemStack> desired, boolean allowInventory) {
+    public boolean throwaway(boolean select, Predicate<? super ItemStack> requested, boolean allowInventory) {
+        // items Vibrato has marked as protected are never treated as expendable
+        final Predicate<ItemStack> desired = stack -> !VibratoSettings.getInstance().isProtectedItem(stack.getItem()) && requested.test(stack);
         LocalPlayer p = ctx.player();
         NonNullList<ItemStack> inv = p.getInventory().items;
         for (int i = 0; i < 9; i++) {

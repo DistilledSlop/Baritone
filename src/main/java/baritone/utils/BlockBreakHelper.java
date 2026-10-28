@@ -20,6 +20,7 @@ package baritone.utils;
 import baritone.api.BaritoneAPI;
 import baritone.api.utils.IPlayerContext;
 import baritone.utils.accessor.IPlayerControllerMP;
+import baritone.vibrato.VibratoSettings;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -50,6 +51,10 @@ public final class BlockBreakHelper {
     }
 
     public void tick(boolean isLeftClick) {
+        if (VibratoSettings.getInstance().isInteractionPaused()) {
+            wasHitting = false;
+            return;
+        }
         if (breakDelayTimer > 0) {
             breakDelayTimer--;
             return;

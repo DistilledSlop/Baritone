@@ -26,6 +26,8 @@ import baritone.api.event.events.*;
 import baritone.api.utils.IPlayerContext;
 import baritone.api.utils.Rotation;
 import baritone.behavior.look.ForkableRandom;
+import baritone.vibrato.RotationSmoother;
+import baritone.vibrato.VibratoSettings;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 
 import java.util.ArrayDeque;
@@ -38,6 +40,7 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
      * The current look target, may be {@code null}.
      */
     private Target target;
+    private Rotation travelLook;
 
     /**
      * The rotation known to the server. Returned by {@link #getEffectiveRotation()} for use in {@link IPlayerContext}.
@@ -65,7 +68,25 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
 
     @Override
     public void updateTarget(Rotation rotation, boolean blockInteract) {
-        this.target = new Target(rotation, Target.Mode.resolve(ctx, blockInteract));
+        if (blockInteract) {
+            VibratoSettings.getInstance().noteBlockInteractTarget();
+        }
+        this.target = new Target(rotation, Target.Mode.resolve(ctx, blockInteract), blockInteract);
+        this.travelLook = null;
+    }
+
+    /** Changes only the visible look; movement continues to use the planner's target. */
+    public void updateTravelLook(Rotation rotation) {
+        if (target != null && !target.blockInteract && target.mode == Target.Mode.CLIENT) {
+            travelLook = rotation;
+        }
+    }
+
+    /** Never replace an existing task or movement target while waiting for a path. */
+    public void updateIdleLook(Rotation rotation) {
+        if (target == null) {
+            updateTarget(rotation, false);
+        }
     }
 
     @Override
@@ -77,6 +98,11 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
     public void onTick(TickEvent event) {
         if (event.getType() == TickEvent.Type.IN) {
             this.processor.tick();
+            VibratoSettings.getInstance().advanceLookTick();
+            final RotationSmoother smoother = VibratoSettings.getInstance().getRotationSmoother();
+            if (smoother != null) {
+                smoother.onTick();
+            }
         }
     }
 
@@ -95,7 +121,8 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
                 }
 
                 this.prevRotation = new Rotation(ctx.player().getYRot(), ctx.player().getXRot());
-                final Rotation actual = this.processor.peekRotation(this.target.rotation);
+                final Rotation actual = this.processor.peekRotation(this.travelLook != null ? this.travelLook : this.target.rotation,
+                        this.travelLook != null);
                 ctx.player().setYRot(actual.getYaw());
                 ctx.player().setXRot(actual.getPitch());
                 break;
@@ -126,6 +153,7 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
                 }
                 // The target is done being used for this game tick, so it can be invalidated
                 this.target = null;
+                this.travelLook = null;
                 break;
             }
             default:
@@ -149,6 +177,7 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
     public void onWorldEvent(WorldEvent event) {
         this.serverRotation = null;
         this.target = null;
+        this.travelLook = null;
     }
 
     public void pig() {
@@ -169,6 +198,14 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
     @Override
     public void onPlayerRotationMove(RotationMoveEvent event) {
         if (this.target != null) {
+            // Camera easing must not rotate a planned movement vector off its path. Keep
+            // ground movement, swimming and sprint-jump impulses aligned with the planner;
+            // elytra uses the real eased aim because flight physics depends on that aim.
+            if (VibratoSettings.getInstance().getRotationSmoother() != null && !ctx.player().isFallFlying()) {
+                event.setYaw(this.target.rotation.getYaw());
+                event.setPitch(this.target.rotation.getPitch());
+                return;
+            }
             final Rotation actual = this.processor.peekRotation(this.target.rotation);
             event.setYaw(actual.getYaw());
             event.setPitch(actual.getPitch());
@@ -194,10 +231,14 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
         private final ForkableRandom rand;
         private double randomYawOffset;
         private double randomPitchOffset;
+        private final boolean simulation;
+        private final RotationSmoother simulationSmoother;
 
         public AbstractAimProcessor(IPlayerContext ctx) {
             this.ctx = ctx;
             this.rand = new ForkableRandom();
+            this.simulation = false;
+            this.simulationSmoother = null;
         }
 
         private AbstractAimProcessor(final AbstractAimProcessor source) {
@@ -205,10 +246,21 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
             this.rand = source.rand.fork();
             this.randomYawOffset = source.randomYawOffset;
             this.randomPitchOffset = source.randomPitchOffset;
+            this.simulation = true;
+            RotationSmoother sourceSmoother = source.rotationSmoother();
+            this.simulationSmoother = sourceSmoother == null ? null : sourceSmoother.fork();
+        }
+
+        private RotationSmoother rotationSmoother() {
+            return simulation ? simulationSmoother : VibratoSettings.getInstance().getRotationSmoother();
         }
 
         @Override
         public final Rotation peekRotation(final Rotation rotation) {
+            return peekRotation(rotation, false);
+        }
+
+        final Rotation peekRotation(final Rotation rotation, boolean preservePitch) {
             final Rotation prev = this.getPrevRotation();
 
             float desiredYaw = rotation.getYaw();
@@ -216,12 +268,20 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
 
             // In other words, the target doesn't care about the pitch, so it used playerRotations().getPitch()
             // and it's safe to adjust it to a normal level
-            if (desiredPitch == prev.getPitch()) {
+            if (!preservePitch && desiredPitch == prev.getPitch()) {
                 desiredPitch = nudgeToLevel(desiredPitch);
             }
 
             desiredYaw += this.randomYawOffset;
             desiredPitch += this.randomPitchOffset;
+
+            // Vibrato hook: the desired yaw is already expressed relative to prev, so the smoother needs no wrapping
+            final RotationSmoother smoother = rotationSmoother();
+            if (smoother != null) {
+                final Rotation smoothed = smoother.smooth(prev, new Rotation(desiredYaw, desiredPitch));
+                desiredYaw = smoothed.getYaw();
+                desiredPitch = smoothed.getPitch();
+            }
 
             return new Rotation(
                     this.calculateMouseMove(prev.getYaw(), desiredYaw),
@@ -231,6 +291,9 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
 
         @Override
         public final void tick() {
+            if (simulationSmoother != null) {
+                simulationSmoother.onTick();
+            }
             // randomLooking
             this.randomYawOffset = (this.rand.nextDouble() - 0.5) * Baritone.settings().randomLooking.value;
             this.randomPitchOffset = (this.rand.nextDouble() - 0.5) * Baritone.settings().randomLooking.value;
@@ -311,10 +374,12 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
 
         public final Rotation rotation;
         public final Mode mode;
+        public final boolean blockInteract;
 
-        public Target(Rotation rotation, Mode mode) {
+        public Target(Rotation rotation, Mode mode, boolean blockInteract) {
             this.rotation = rotation;
             this.mode = mode;
+            this.blockInteract = blockInteract;
         }
 
         enum Mode {

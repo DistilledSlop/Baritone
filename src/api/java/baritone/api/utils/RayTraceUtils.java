@@ -29,6 +29,12 @@ import net.minecraft.world.phys.Vec3;
  */
 public final class RayTraceUtils {
 
+    /**
+     * Which fluids block the raytraces made here. Vibrato switches this to {@link ClipContext.Fluid#ANY} while it
+     * needs to click through to a bucket target; stock Baritone behavior is {@link ClipContext.Fluid#NONE}.
+     */
+    public static ClipContext.Fluid fluidHandling = ClipContext.Fluid.NONE;
+
     private RayTraceUtils() {}
 
     /**
@@ -59,7 +65,7 @@ public final class RayTraceUtils {
                 direction.y * blockReachDistance,
                 direction.z * blockReachDistance
         );
-        return entity.level().clip(new ClipContext(start, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, entity));
+        return entity.level().clip(new ClipContext(start, end, ClipContext.Block.OUTLINE, fluidHandling, entity));
     }
 
     public static Vec3 inferSneakingEyePosition(Entity entity) {

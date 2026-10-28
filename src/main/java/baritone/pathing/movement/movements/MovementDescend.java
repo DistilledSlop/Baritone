@@ -247,6 +247,16 @@ public class MovementDescend extends Movement {
         if (safeMode()) {
             double destX = (src.getX() + 0.5) * 0.17 + (dest.getX() + 0.5) * 0.83;
             double destZ = (src.getZ() + 0.5) * 0.17 + (dest.getZ() + 0.5) * 0.83;
+            double dirX = dest.getX() - src.getX();
+            double dirZ = dest.getZ() - src.getZ();
+            double dx = ctx.player().position().x - destX;
+            double dz = ctx.player().position().z - destZ;
+            if (shouldWaitForLanding(ctx.player().onGround(), dx, dz, dirX, dirZ)) {
+                // Once over the landing corridor, wait for the fall instead of
+                // repeatedly turning back toward the point we just crossed.
+                state.setTarget(new MovementState.MovementTarget());
+                return state;
+            }
             state.setTarget(new MovementState.MovementTarget(
                     RotationUtils.calcRotationFromVec3d(ctx.playerHead(),
                             new Vec3(destX, dest.getY(), destZ),
@@ -264,14 +274,31 @@ public class MovementDescend extends Movement {
 
         state.setInput(Input.SNEAK, Baritone.settings().allowWalkOnMagmaBlocks.value && ctx.world().getBlockState(ctx.player().blockPosition().below()).is(Blocks.MAGMA_BLOCK));
 
+        if (centeredInFlight(ctx.player().onGround(), diffX, diffZ,
+                ctx.player().getDeltaMovement().x, ctx.player().getDeltaMovement().z)) {
+            // Already on course for the landing: do not aim through the point
+            // under our feet while gravity completes the step down.
+            state.setTarget(new MovementState.MovementTarget());
+            return state;
+        }
         if (!playerFeet.equals(dest) || ab > 0.25) {
             if (numTicks++ < 20 && fromStart < 1.25) {
                 MovementHelper.moveTowards(ctx, state, fakeDest);
             } else {
                 MovementHelper.moveTowards(ctx, state, dest);
             }
-        }
+        } else state.setTarget(new MovementState.MovementTarget());
         return state;
+    }
+
+    static boolean centeredInFlight(boolean onGround, double dx, double dz, double vx, double vz) {
+        return !onGround && Math.abs(dx) <= 0.25 && Math.abs(dz) <= 0.25
+                && Math.abs(dx + vx) <= 0.20 && Math.abs(dz + vz) <= 0.20;
+    }
+
+    static boolean shouldWaitForLanding(boolean onGround, double dx, double dz, double dirX, double dirZ) {
+        return !onGround && dx * dirX + dz * dirZ >= 0
+                && Math.abs(dx * dirZ - dz * dirX) < 0.2;
     }
 
     public boolean safeMode() {

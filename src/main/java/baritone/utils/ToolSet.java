@@ -18,6 +18,7 @@
 package baritone.utils;
 
 import baritone.Baritone;
+import baritone.vibrato.VibratoSettings;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.Holder;
 import net.minecraft.tags.ItemTags;
@@ -137,6 +138,9 @@ public class ToolSet {
         BlockState blockState = b.defaultBlockState();
         for (int i = 0; i < 9; i++) {
             ItemStack itemStack = player.getInventory().getItem(i);
+            if (VibratoSettings.getInstance().shouldForceUseTool(blockState, itemStack)) {
+                return i;
+            }
             if (!Baritone.settings().useSwordToMine.value && itemStack.is(ItemTags.SWORDS)) {
                 continue;
             }

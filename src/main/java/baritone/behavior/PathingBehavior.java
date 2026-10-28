@@ -37,12 +37,17 @@ import baritone.process.ElytraProcess;
 import baritone.utils.PathRenderer;
 import baritone.utils.PathingCommandContext;
 import baritone.utils.pathing.Favoring;
+import baritone.vibrato.TravelClearance;
+import baritone.vibrato.VibratoSettings;
+import baritone.api.utils.Rotation;
+import baritone.api.utils.input.Input;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.LinkedBlockingQueue;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.monster.Monster;
 
 public final class PathingBehavior extends Behavior implements IPathingBehavior, Helper {
 
@@ -69,6 +74,8 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
     private final Object pathPlanLock = new Object();
 
     private boolean lastAutoJump;
+    private int idleScanTicks;
+    private Rotation idleScanOrigin;
 
     private BetterBlockPos expectedSegmentStart;
 
@@ -103,8 +110,34 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
         expectedSegmentStart = pathStart();
         baritone.getPathingControlManager().preTick();
         tickPath();
+        scanWhileCalculating();
         ticksElapsedSoFar++;
         dispatchEvents();
+    }
+
+    private void scanWhileCalculating() {
+        var input = baritone.getInputOverrideHandler();
+        boolean idle = current == null && inProgress != null
+                && VibratoSettings.getInstance().getRotationSmoother() != null
+                && ctx.player().onGround() && !ctx.player().isInWater()
+                && ctx.player().getDeltaMovement().horizontalDistanceSqr() < 0.001
+                && !input.isInputForcedDown(Input.MOVE_FORWARD) && !input.isInputForcedDown(Input.MOVE_BACK)
+                && !input.isInputForcedDown(Input.MOVE_LEFT) && !input.isInputForcedDown(Input.MOVE_RIGHT)
+                && !input.isInputForcedDown(Input.JUMP) && !input.isInputForcedDown(Input.SNEAK)
+                && !input.isInputForcedDown(Input.CLICK_LEFT) && !input.isInputForcedDown(Input.CLICK_RIGHT)
+                && ctx.world().getEntitiesOfClass(Monster.class, ctx.player().getBoundingBox().inflate(8)).isEmpty()
+                && TravelClearance.wideGround(ctx, ctx.playerFeet(), 2);
+        if (!idle) {
+            idleScanOrigin = null;
+            idleScanTicks = 0;
+            return;
+        }
+        if (idleScanOrigin == null) idleScanOrigin = ctx.playerRotations();
+        idleScanTicks++;
+        // A slow, bounded glance; a new task target always replaces this target.
+        float yaw = idleScanOrigin.getYaw() + (float) (12 * Math.sin(idleScanTicks / 45.0));
+        float pitch = Math.max(-90, Math.min(90, idleScanOrigin.getPitch() + (float) (3 * Math.sin(idleScanTicks / 63.0))));
+        baritone.getLookBehavior().updateIdleLook(new Rotation(yaw, pitch));
     }
 
     @Override

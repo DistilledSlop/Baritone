@@ -19,6 +19,7 @@ package baritone.utils;
 
 import baritone.Baritone;
 import baritone.api.utils.IPlayerContext;
+import baritone.vibrato.VibratoSettings;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.phys.BlockHitResult;
@@ -36,6 +37,9 @@ public class BlockPlaceHelper {
     }
 
     public void tick(boolean rightClickRequested) {
+        if (VibratoSettings.getInstance().isInteractionPaused()) {
+            return;
+        }
         if (rightClickTimer > 0) {
             rightClickTimer--;
             return;

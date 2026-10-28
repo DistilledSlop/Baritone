@@ -33,6 +33,9 @@ import baritone.pathing.movement.MovementHelper;
 import baritone.pathing.movement.MovementState;
 import baritone.pathing.movement.movements.*;
 import baritone.utils.BlockStateInterface;
+import baritone.vibrato.TravelClearance;
+import baritone.vibrato.TravelPolicy;
+import baritone.vibrato.VibratoSettings;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Vec3i;
 import net.minecraft.util.Tuple;
@@ -236,6 +239,8 @@ public class PathExecutor implements IPathExecutor, Helper {
             return true;
         } else {
             sprintNextTick = shouldSprintNextTick();
+            holdLandingView();
+            optionalTravelBehavior();
             if (!sprintNextTick) {
                 ctx.player().setSprinting(false); // letting go of control doesn't make you stop sprinting actually
             }
@@ -485,6 +490,51 @@ public class PathExecutor implements IPathExecutor, Helper {
             }
         }
         return false;
+    }
+
+    private void optionalTravelBehavior() {
+        if (VibratoSettings.getInstance().getRotationSmoother() == null) return;
+        if (pathPosition < 0 || pathPosition + 2 >= path.movements().size()) return;
+        var input = behavior.baritone.getInputOverrideHandler();
+        boolean ordinary = input.isInputForcedDown(Input.MOVE_FORWARD)
+                && !input.isInputForcedDown(Input.SNEAK) && !input.isInputForcedDown(Input.JUMP)
+                && !input.isInputForcedDown(Input.CLICK_LEFT) && !input.isInputForcedDown(Input.CLICK_RIGHT);
+        for (int i = 0; i < 3 && ordinary; i++) {
+            IMovement step = path.movements().get(pathPosition + i);
+            ordinary = step instanceof MovementTraverse
+                    && ((Movement) step).toBreak(new BlockStateInterface(ctx)).isEmpty()
+                    && ((Movement) step).toPlace(new BlockStateInterface(ctx)).isEmpty();
+        }
+        boolean grounded = ctx.player().onGround() && !ctx.player().isInWater();
+        boolean clear = ordinary && TravelClearance.wideGround(ctx, ctx.playerFeet(), 2);
+        for (int i = 0; i < 3 && clear; i++) {
+            clear = TravelClearance.wideGround(ctx, path.movements().get(pathPosition + i).getDest(), 2);
+        }
+        if (!TravelPolicy.lookAhead(grounded, clear, ordinary)) {
+            return;
+        }
+        BlockPos gaze = path.movements().get(pathPosition + 2).getDest();
+        Vec3 lookAt = new Vec3(gaze.getX() + 0.5, ctx.playerHead().y, gaze.getZ() + 0.5);
+        Rotation visible = RotationUtils.calcRotationFromVec3d(ctx.playerHead(), lookAt, ctx.playerRotations())
+                .withPitch(ctx.playerRotations().getPitch());
+        behavior.baritone.getLookBehavior().updateTravelLook(visible);
+    }
+
+    private void holdLandingView() {
+        if (pathPosition >= path.movements().size()) return;
+        IMovement movement = path.movements().get(pathPosition);
+        var input = behavior.baritone.getInputOverrideHandler();
+        boolean interacting = input.isInputForcedDown(Input.CLICK_LEFT) || input.isInputForcedDown(Input.CLICK_RIGHT);
+        if (!holdLandingViewAllowed(VibratoSettings.getInstance().getRotationSmoother() != null,
+                ctx.player().onGround(), movement instanceof MovementFall || movement instanceof MovementDescend,
+                interacting)) return;
+        // Only the visible view is held; RotationMoveEvent still receives the
+        // planner's actual correction yaw. Forced block targets cannot be replaced.
+        behavior.baritone.getLookBehavior().updateTravelLook(ctx.playerRotations());
+    }
+
+    static boolean holdLandingViewAllowed(boolean smoother, boolean grounded, boolean falling, boolean interacting) {
+        return smoother && !grounded && falling && !interacting;
     }
 
     private Tuple<Vec3, BlockPos> overrideFall(MovementFall movement) {

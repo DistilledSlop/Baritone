@@ -29,6 +29,7 @@ import baritone.pathing.movement.MovementState.MovementTarget;
 import baritone.pathing.precompute.Ternary;
 import baritone.utils.BlockStateInterface;
 import baritone.utils.ToolSet;
+import baritone.vibrato.VibratoSettings;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
@@ -71,6 +72,9 @@ public interface MovementHelper extends ActionCosts, Helper {
 
     static boolean avoidBreaking(BlockStateInterface bsi, int x, int y, int z, BlockState state) {
         if (!bsi.worldBorder.canPlaceAt(x, z)) {
+            return true;
+        }
+        if (VibratoSettings.getInstance().shouldAvoidBreaking(x, y, z)) {
             return true;
         }
         Block b = state.getBlock();
@@ -122,12 +126,35 @@ public interface MovementHelper extends ActionCosts, Helper {
         return canWalkThrough(bsi, x, y, z, bsi.get0(x, y, z));
     }
 
+    /**
+     * Vibrato hook, consulted before the per-block-state cache because its predicates depend on the position.
+     *
+     * @return 1 if the position is forced walkable-through, -1 if it is forced not walkable-through, 0 for no opinion
+     */
+    static int vibratoWalkThroughOverride(int x, int y, int z, BlockState state) {
+        VibratoSettings settings = VibratoSettings.getInstance();
+        if (settings.shouldAvoidWalkThrough(x, y, z)) {
+            return -1;
+        }
+        if (settings.isFlowingWaterPassAllowed() && state.getFluidState().getType() == Fluids.FLOWING_WATER) {
+            return 1;
+        }
+        if (settings.isSwimThroughLavaAllowed() && isLava(state)) {
+            return 1;
+        }
+        return 0;
+    }
+
     static boolean canWalkThrough(CalculationContext context, int x, int y, int z, BlockState state) {
+        int override = vibratoWalkThroughOverride(x, y, z, state);
+        if (override != 0) {
+            return override > 0;
+        }
         return context.precomputedData.canWalkThrough(context.bsi, x, y, z, state);
     }
 
     static boolean canWalkThrough(CalculationContext context, int x, int y, int z) {
-        return context.precomputedData.canWalkThrough(context.bsi, x, y, z, context.get(x, y, z));
+        return canWalkThrough(context, x, y, z, context.get(x, y, z));
     }
 
     static boolean canWalkThrough(BlockStateInterface bsi, int x, int y, int z, BlockState state) {
@@ -273,6 +300,9 @@ public interface MovementHelper extends ActionCosts, Helper {
     }
 
     static boolean fullyPassable(CalculationContext context, int x, int y, int z, BlockState state) {
+        if (VibratoSettings.getInstance().shouldAvoidWalkThrough(x, y, z)) {
+            return false;
+        }
         return context.precomputedData.fullyPassable(context.bsi, x, y, z, state);
     }
 
@@ -452,6 +482,9 @@ public interface MovementHelper extends ActionCosts, Helper {
     }
 
     static boolean canWalkOn(CalculationContext context, int x, int y, int z, BlockState state) {
+        if (VibratoSettings.getInstance().shouldForceWalkOn(x, y, z)) {
+            return true;
+        }
         return context.precomputedData.canWalkOn(context.bsi, x, y, z, state);
     }
 
@@ -808,8 +841,11 @@ public interface MovementHelper extends ActionCosts, Helper {
                 double faceY = (placeAt.getY() + against1.getY() + 0.5D) * 0.5D;
                 double faceZ = (placeAt.getZ() + against1.getZ() + 1.0D) * 0.5D;
                 Rotation place = RotationUtils.calcRotationFromVec3d(wouldSneak ? RayTraceUtils.inferSneakingEyePosition(ctx.player()) : ctx.playerHead(), new Vec3(faceX, faceY, faceZ), ctx.playerRotations());
-                Rotation actual = baritone.getLookBehavior().getAimProcessor().peekRotation(place);
-                HitResult res = RayTraceUtils.rayTraceTowards(ctx.player(), actual, ctx.playerController().getBlockReachDistance(), wouldSneak);
+                // Choose a geometrically reachable face before easing the camera toward it.
+                // A one-tick smoothed probe can miss every face and never seed a target.
+                Rotation probe = VibratoSettings.getInstance().getRotationSmoother() != null
+                        ? place : baritone.getLookBehavior().getAimProcessor().peekRotation(place);
+                HitResult res = RayTraceUtils.rayTraceTowards(ctx.player(), probe, ctx.playerController().getBlockReachDistance(), wouldSneak);
                 if (res != null && res.getType() == HitResult.Type.BLOCK && ((BlockHitResult) res).getBlockPos().equals(against1) && ((BlockHitResult) res).getBlockPos().relative(((BlockHitResult) res).getDirection()).equals(placeAt)) {
                     state.setTarget(new MovementTarget(place, true));
                     found = true;

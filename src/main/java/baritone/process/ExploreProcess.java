@@ -102,7 +102,10 @@ public final class ExploreProcess extends BaritoneProcessHelper implements IExpl
             logDebug("awaiting region load from disk");
             return new PathingCommand(null, PathingCommandType.REQUEST_PAUSE);
         }
-        return new PathingCommand(new GoalComposite(closestUncached), PathingCommandType.FORCE_REVALIDATE_GOAL_AND_PATH);
+        // Cache updates change the candidate set while a partial path can still be useful.
+        // Force validation cancels those partial paths whenever the frontier changes.
+        // Revalidate completed destinations while allowing useful partial paths to continue.
+        return new PathingCommand(new GoalComposite(closestUncached), PathingCommandType.REVALIDATE_GOAL_AND_PATH);
     }
 
     private Goal[] closestUncachedChunks(BlockPos center, IChunkFilter filter) {

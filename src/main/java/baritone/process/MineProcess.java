@@ -357,6 +357,15 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
     }
 
     public static List<BlockPos> searchWorld(CalculationContext ctx, BlockOptionalMetaLookup filter, int max, List<BlockPos> alreadyKnown, List<BlockPos> blacklist, List<BlockPos> dropped) {
+        return searchWorld(ctx, filter, max, alreadyKnown, blacklist, dropped, true);
+    }
+
+    /** Discover blocks without applying mining-only safety, exposure or height rules. */
+    public static List<BlockPos> searchWorldForTracking(CalculationContext ctx, BlockOptionalMetaLookup filter, int max, List<BlockPos> alreadyKnown, List<BlockPos> blacklist) {
+        return searchWorld(ctx, filter, max, alreadyKnown, blacklist, Collections.emptyList(), false);
+    }
+
+    private static List<BlockPos> searchWorld(CalculationContext ctx, BlockOptionalMetaLookup filter, int max, List<BlockPos> alreadyKnown, List<BlockPos> blacklist, List<BlockPos> dropped, boolean mining) {
         List<BlockPos> locs = new ArrayList<>();
         List<Block> untracked = new ArrayList<>();
         for (BlockOptionalMeta bom : filter.blocks()) {
@@ -377,9 +386,11 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
             }
         }
 
-        locs = prune(ctx, locs, filter, max, blacklist, dropped);
+        locs = mining ? prune(ctx, locs, filter, max, blacklist, dropped)
+                : pruneForTracking(ctx, locs, filter, max, blacklist);
 
-        if (!untracked.isEmpty() || (Baritone.settings().extendCacheOnThreshold.value && locs.size() < max)) {
+        if (WorldScanPolicy.scanLoaded(mining, !untracked.isEmpty(),
+                Baritone.settings().extendCacheOnThreshold.value, locs.size(), max)) {
             locs.addAll(BaritoneAPI.getProvider().getWorldScanner().scanChunkRadius(
                     ctx.getBaritone().getPlayerContext(),
                     filter,
@@ -391,7 +402,19 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
 
         locs.addAll(alreadyKnown);
 
-        return prune(ctx, locs, filter, max, blacklist, dropped);
+        return mining ? prune(ctx, locs, filter, max, blacklist, dropped)
+                : pruneForTracking(ctx, locs, filter, max, blacklist);
+    }
+
+    private static List<BlockPos> pruneForTracking(CalculationContext ctx, List<BlockPos> locations, BlockOptionalMetaLookup filter, int max, List<BlockPos> blacklist) {
+        return locations.stream()
+                .distinct()
+                .filter(pos -> !ctx.bsi.worldContainsLoadedChunk(pos.getX(), pos.getZ())
+                        || filter.has(ctx.get(pos.getX(), pos.getY(), pos.getZ())))
+                .filter(pos -> !blacklist.contains(pos))
+                .sorted(Comparator.comparingDouble(ctx.getBaritone().getPlayerContext().player().blockPosition()::distSqr))
+                .limit(max)
+                .collect(Collectors.toList());
     }
 
     private boolean addNearby() {

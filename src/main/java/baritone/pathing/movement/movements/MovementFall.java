@@ -131,7 +131,8 @@ public class MovementFall extends Movement {
         if (targetRotation != null) {
             state.setTarget(new MovementTarget(targetRotation, true));
         } else {
-            state.setTarget(new MovementTarget(toDest, false));
+            // Targets persist across MovementState updates, including completion.
+            state.setTarget(new MovementTarget());
         }
         if (playerFeet.equals(dest) && (ctx.player().position().y - playerFeet.getY() < 0.094 || isWater)) { // 0.094 because lilypads
             if (isWater) {
@@ -146,6 +147,9 @@ public class MovementFall extends Movement {
                     }
                 } else if (Inventory.isHotbarSlot(ctx.player().getInventory().findSlotMatchingItem(STACK_BUCKET_EMPTY))) {
                     ctx.player().getInventory().selected = ctx.player().getInventory().findSlotMatchingItem(STACK_BUCKET_EMPTY);
+                    if (targetRotation == null) {
+                        state.setTarget(new MovementTarget(toDest, false));
+                    }
                     if (ctx.player().getDeltaMovement().y >= 0) {
                         return state.setInput(Input.CLICK_RIGHT, true);
                     } else {
@@ -168,6 +172,7 @@ public class MovementFall extends Movement {
             state.setInput(Input.MOVE_FORWARD, true);
         }
         Vec3i avoid = Optional.ofNullable(avoid()).map(Direction::getNormal).orElse(null);
+        boolean avoidingObstacle = avoid != null;
         if (avoid == null) {
             avoid = src.subtract(dest);
         } else {
@@ -178,8 +183,12 @@ public class MovementFall extends Movement {
                 state.setInput(Input.SNEAK, false);
             }
         }
-        if (targetRotation == null) {
-            Vec3 destCenterOffset = new Vec3(destCenter.x + 0.125 * avoid.getX(), destCenter.y, destCenter.z + 0.125 * avoid.getZ());
+        // Only aim at the landing point while correcting. Directly above it,
+        // tiny position changes otherwise flip the desired yaw by 180 degrees.
+        if (targetRotation == null && Boolean.TRUE.equals(state.getInputStates().get(Input.MOVE_FORWARD))) {
+            Vec3 destCenterOffset = avoidingObstacle
+                    ? new Vec3(destCenter.x + 0.125 * avoid.getX(), destCenter.y, destCenter.z + 0.125 * avoid.getZ())
+                    : destCenter;
             state.setTarget(new MovementTarget(RotationUtils.calcRotationFromVec3d(ctx.playerHead(), destCenterOffset, ctx.playerRotations()), false));
         }
         return state;
