@@ -51,9 +51,16 @@ public class MovementFall extends Movement {
 
     private static final ItemStack STACK_BUCKET_WATER = new ItemStack(Items.WATER_BUCKET);
     private static final ItemStack STACK_BUCKET_EMPTY = new ItemStack(Items.BUCKET);
+    private final WaterLandingRecovery waterRecovery = new WaterLandingRecovery();
 
     public MovementFall(IBaritone baritone, BetterBlockPos src, BetterBlockPos dest) {
         super(baritone, src, dest, MovementFall.buildPositionsToBreak(src, dest));
+    }
+
+    @Override
+    public void reset() {
+        super.reset();
+        waterRecovery.reset();
     }
 
     @Override
@@ -111,6 +118,7 @@ public class MovementFall extends Movement {
                 targetRotation = new Rotation(toDest.getYaw(), 90.0F);
 
                 if (ctx.isLookingAt(dest) || ctx.isLookingAt(dest.below())) {
+                    waterRecovery.requestPlacement(ctx.player().getInventory().countItem(Items.WATER_BUCKET));
                     state.setInput(Input.CLICK_RIGHT, true);
                 }
             }
@@ -126,8 +134,17 @@ public class MovementFall extends Movement {
             state.setTarget(new MovementTarget(toDest, false));
         }
         if (playerFeet.equals(dest) && (ctx.player().position().y - playerFeet.getY() < 0.094 || isWater)) { // 0.094 because lilypads
-            if (isWater) { // only match water, not flowing water (which we cannot pick up with a bucket)
-                if (Inventory.isHotbarSlot(ctx.player().getInventory().findSlotMatchingItem(STACK_BUCKET_EMPTY))) {
+            if (isWater) {
+                // Natural water is already a safe landing. Recover only a source
+                // this fall actually used, and never wait forever on flowing water.
+                boolean recover = waterRecovery.tryRecovery(destState.getFluidState().isSource(),
+                        ctx.player().getInventory().countItem(Items.WATER_BUCKET));
+                if (!recover) {
+                    state.setInput(Input.CLICK_RIGHT, false);
+                    if (ctx.player().getDeltaMovement().y >= 0) {
+                        return state.setStatus(MovementStatus.SUCCESS);
+                    }
+                } else if (Inventory.isHotbarSlot(ctx.player().getInventory().findSlotMatchingItem(STACK_BUCKET_EMPTY))) {
                     ctx.player().getInventory().selected = ctx.player().getInventory().findSlotMatchingItem(STACK_BUCKET_EMPTY);
                     if (ctx.player().getDeltaMovement().y >= 0) {
                         return state.setInput(Input.CLICK_RIGHT, true);
